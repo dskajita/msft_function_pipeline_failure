@@ -1,0 +1,89 @@
+# .NET Core Function App to Windows on Azure
+# Build a .NET Core function app and deploy it to Azure as a Windows function App.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/en-us/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- master
+
+variables:
+  # Azure Resource Manager connection created during pipeline creation
+  serviceConnectionToAzure: 'YOUR-AZURE-RESOURCE-MANAGER'
+
+  # Function app name
+  functionAppName: 'random-name-01'
+
+  # Azure Function name
+  azureFunctionName: 'YOUR-FUNCTION-NAME'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+  # Working Directory
+  workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+stages:
+- stage: Build
+  displayName: Build stage
+
+  jobs:
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: $(vmImageName)
+
+    steps:
+    - task: MavenAuthenticate@0
+      displayName: 'Maven Authenticate'
+      inputs:
+        artifactsFeeds: 'studio'
+
+    - task: Maven@3
+      displayName: Build
+      inputs:
+        mavenPomFile: '$(workingDirectory)/pom.xml'
+        mavenOptions: '-Xmx3072m'
+        javaHomeOption: 'JDKVersion'
+        jdkVersionOption: '1.8'
+        jdkArchitectureOption: 'x64'
+        publishJUnitResults: true
+        testResultsFiles: '**/surefire-reports/TEST-*.xml'
+        goals: 'clean package'
+
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(workingDirectory)/target/azure-functions/$(azureFunctionName)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+        replaceExistingArchive: true
+
+    - task: PublishBuildArtifacts@1
+      displayName: Publish Artifact
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+  condition: succeeded()
+
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    environment: 'development'
+    pool:
+      vmImage: $(vmImageName)
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureFunctionApp@1
+            displayName: 'Azure functions app deploy'
+            inputs:
+              azureSubscription: '$(serviceConnectionToAzure)'
+              appType: functionApp
+              appName: $(functionAppName)
+              runtimeStack: 'JAVA|8'
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
